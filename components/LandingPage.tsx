@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { db } from '../firebaseConfig';
+import { collection, addDoc, doc, setDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { RoomStatus, RoomVisibility } from '../types';
 
 interface LandingPageProps {
@@ -11,7 +12,7 @@ interface LandingPageProps {
 const LandingPage: React.FC<LandingPageProps> = ({ user, onJoinRoom }) => {
   const [roomCode, setRoomCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
-  const [displayName, setDisplayName] = useState(user.displayName || '');
+  const [displayName, setDisplayName] = useState(user?.displayName || '');
 
   const createRoom = async (visibility: RoomVisibility) => {
     setIsJoining(true);
@@ -29,10 +30,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ user, onJoinRoom }) => {
         maxPlayers: 8,
         lastActiveAt: Date.now(),
       };
-      const docRef = await db.collection('rooms').add(roomData);
+      const roomRef = await addDoc(collection(db, 'rooms'), roomData);
       
-      // Add initial player
-      await db.collection(`rooms/${docRef.id}/players`).doc(user.uid).set({
+      await setDoc(doc(db, `rooms/${roomRef.id}/players`, user.uid), {
         id: user.uid,
         name: displayName || 'Guest',
         score: 0,
@@ -42,10 +42,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ user, onJoinRoom }) => {
         joinedAt: Date.now()
       });
 
-      onJoinRoom(docRef.id);
+      onJoinRoom(roomRef.id);
     } catch (error) {
       console.error("Error creating room:", error);
-      alert("Failed to create room.");
+      alert("Failed to create room. Ensure Firestore rules allow writes.");
     } finally {
       setIsJoining(false);
     }
@@ -54,15 +54,17 @@ const LandingPage: React.FC<LandingPageProps> = ({ user, onJoinRoom }) => {
   const joinRandom = async () => {
     setIsJoining(true);
     try {
-      const snapshot = await db.collection('rooms')
-        .where('visibility', '==', RoomVisibility.PUBLIC)
-        .where('status', '==', RoomStatus.WAITING)
-        .get();
+      const q = query(
+        collection(db, 'rooms'),
+        where('visibility', '==', RoomVisibility.PUBLIC),
+        where('status', '==', RoomStatus.WAITING)
+      );
+      const snapshot = await getDocs(q);
       
       const availableRooms = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter((r: any) => r.playerCount < r.maxPlayers)
-        .sort((a: any, b: any) => b.playerCount - a.playerCount);
+        .map(d => ({ id: d.id, ...d.data() } as any))
+        .filter(r => r.playerCount < r.maxPlayers)
+        .sort((a, b) => b.playerCount - a.playerCount);
 
       if (availableRooms.length > 0) {
         onJoinRoom(availableRooms[0].id);
@@ -81,8 +83,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ user, onJoinRoom }) => {
     if (!roomCode.trim()) return;
     setIsJoining(true);
     try {
-      const doc = await db.collection('rooms').doc(roomCode.trim()).get();
-      if (doc.exists) {
+      const roomSnap = await getDoc(doc(db, 'rooms', roomCode.trim()));
+      if (roomSnap.exists()) {
         onJoinRoom(roomCode.trim());
       } else {
         alert("Room not found!");
@@ -109,7 +111,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ user, onJoinRoom }) => {
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:border-indigo-400 focus:ring-0 transition-all outline-none text-lg"
+              className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:border-indigo-400 outline-none text-lg"
               placeholder="Enter name..."
               maxLength={15}
             />
@@ -153,7 +155,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ user, onJoinRoom }) => {
               type="text"
               value={roomCode}
               onChange={(e) => setRoomCode(e.target.value)}
-              className="flex-1 px-4 py-2 rounded-xl border-2 border-slate-200 focus:border-indigo-400 transition-all outline-none"
+              className="flex-1 px-4 py-2 rounded-xl border-2 border-slate-200 focus:border-indigo-400 outline-none"
               placeholder="Enter Code"
             />
             <button
@@ -165,12 +167,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ user, onJoinRoom }) => {
             </button>
           </div>
         </div>
-      </div>
-      
-      <div className="mt-8 text-white/80 text-sm flex gap-4">
-        <span><i className="fas fa-users mr-1"></i> Multiplayer</span>
-        <span><i className="fas fa-bolt mr-1"></i> Realtime Sync</span>
-        <span><i className="fas fa-shield-alt mr-1"></i> No Account Required</span>
       </div>
     </div>
   );

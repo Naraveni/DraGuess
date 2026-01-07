@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebaseConfig';
+import { collection, onSnapshot, addDoc, doc, updateDoc, getDoc, query, orderBy } from 'firebase/firestore';
 import { Message, RoomStatus } from '../types';
 
 interface ChatProps {
@@ -19,20 +20,19 @@ const Chat: React.FC<ChatProps> = ({ roomId, user, isDrawer, currentWord, timer,
   const [hasGuessedCorrectly, setHasGuessedCorrectly] = useState(false);
 
   useEffect(() => {
-    const unsub = db.collection(`rooms/${roomId}/messages`).onSnapshot((snap: any) => {
-      setMessages(snap.docs.map((d: any) => d.data() as Message).sort((a, b) => a.timestamp - b.timestamp));
+    const q = query(collection(db, `rooms/${roomId}/messages`), orderBy('timestamp', 'asc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
     });
 
-    const unsubPlayer = db.collection(`rooms/${roomId}/players`).doc(user.uid).onSnapshot((doc: any) => {
-        if (doc) setHasGuessedCorrectly(doc.hasGuessed);
+    const unsubPlayer = onSnapshot(doc(db, `rooms/${roomId}/players`, user.uid), (snap) => {
+        if (snap.exists()) setHasGuessedCorrectly(snap.data().hasGuessed);
     });
 
     return () => { unsub(); unsubPlayer(); };
   }, [roomId, user.uid]);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [messages]);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,64 +41,52 @@ const Chat: React.FC<ChatProps> = ({ roomId, user, isDrawer, currentWord, timer,
     const text = input.trim().toLowerCase();
     const isCorrect = text === currentWord && !isDrawer && !hasGuessedCorrectly;
     
-    // Create message object
-    const newMessage: Omit<Message, 'id'> = {
+    if (isCorrect) {
+      const scoreGain = Math.floor((timer / 80) * 500) + 100;
+      const playerRef = doc(db, `rooms/${roomId}/players`, user.uid);
+      const playerSnap = await getDoc(playerRef);
+      await updateDoc(playerRef, {
+        score: (playerSnap.data()?.score || 0) + scoreGain,
+        hasGuessed: true
+      });
+
+      const roomSnap = await getDoc(doc(db, 'rooms', roomId));
+      const drawerId = roomSnap.data()?.drawerId;
+      if (drawerId) {
+          const dRef = doc(db, `rooms/${roomId}/players`, drawerId);
+          const dSnap = await getDoc(dRef);
+          await updateDoc(dRef, { score: (dSnap.data()?.score || 0) + 50 });
+      }
+    }
+
+    await addDoc(collection(db, `rooms/${roomId}/messages`), {
       senderId: user.uid,
       senderName: user.displayName || 'Guest',
       text: isCorrect ? 'Guessed correctly!' : input.trim(),
       isCorrect,
       timestamp: Date.now()
-    };
-
-    // If correct, update score
-    if (isCorrect) {
-      const scoreGain = Math.floor((timer / 80) * 500) + 100;
-      const playerDoc = await db.collection(`rooms/${roomId}/players`).doc(user.uid).get();
-      const currentScore = playerDoc.data()?.score || 0;
-      await db.collection(`rooms/${roomId}/players`).doc(user.uid).update({
-        score: currentScore + scoreGain,
-        hasGuessed: true
-      });
-
-      // Bonus for drawer
-      const roomDoc = await db.collection('rooms').doc(roomId).get();
-      const drawerId = roomDoc.data()?.drawerId;
-      if (drawerId) {
-          const drawerDoc = await db.collection(`rooms/${roomId}/players`).doc(drawerId).get();
-          await db.collection(`rooms/${roomId}/players`).doc(drawerId).update({
-              score: (drawerDoc.data()?.score || 0) + 50
-          });
-      }
-    }
-
-    await db.collection(`rooms/${roomId}/messages`).add(newMessage);
+    });
     setInput('');
   };
 
   return (
     <div className="flex-1 flex flex-col bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-      <div className="p-3 border-b bg-slate-50 font-bold text-slate-500 text-sm uppercase tracking-wider">
-        Chat & Guesses
-      </div>
-      
-      <div className="flex-1 overflow-y-auto p-4 space-y-2 scrollbar-hide">
+      <div className="p-3 border-b bg-slate-50 font-bold text-slate-500 text-sm uppercase tracking-wider">Chat</div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-2">
         {messages.map((m) => (
-          <div key={m.timestamp} className={`text-sm ${m.isCorrect ? 'text-emerald-600 font-bold animate-bounce' : 'text-slate-700'}`}>
+          <div key={m.id} className={`text-sm ${m.isCorrect ? 'text-emerald-600 font-bold' : 'text-slate-700'}`}>
             <span className="font-bold opacity-70">{m.senderName}: </span>
             <span>{m.isCorrect ? 'guessed the word!' : m.text}</span>
           </div>
         ))}
         <div ref={chatEndRef} />
       </div>
-
       <form onSubmit={sendMessage} className="p-3 bg-slate-50">
         <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
+          type="text" value={input} onChange={(e) => setInput(e.target.value)}
           disabled={isDrawer || hasGuessedCorrectly || status !== RoomStatus.PLAYING}
-          className="w-full px-4 py-2 rounded-xl border-2 border-slate-200 focus:border-indigo-400 outline-none transition-all disabled:opacity-50 disabled:bg-slate-100"
-          placeholder={isDrawer ? "You are drawing!" : hasGuessedCorrectly ? "Correct!" : "Type your guess..."}
+          className="w-full px-4 py-2 rounded-xl border-2 border-slate-200 outline-none disabled:bg-slate-100"
+          placeholder={isDrawer ? "Drawing..." : "Type guess..."}
         />
       </form>
     </div>

@@ -1,19 +1,26 @@
 
 import React, { useState, useEffect } from 'react';
 import { auth } from './firebaseConfig';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import LandingPage from './components/LandingPage';
 import GameRoom from './components/GameRoom';
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<any>(auth.currentUser);
+  const [user, setUser] = useState<any>(null);
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Initial auth check
-    if (!user) {
-      auth.signInAnonymously().then(res => setUser(res.user));
-    }
-  }, [user]);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      if (u) {
+        setUser(u);
+        setLoading(false);
+      } else {
+        signInAnonymously(auth).catch(err => console.error("Auth error:", err));
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleJoinRoom = (roomId: string) => {
     setCurrentRoomId(roomId);
@@ -23,12 +30,12 @@ const App: React.FC = () => {
     setCurrentRoomId(null);
   };
 
-  if (!user) {
+  if (loading) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-blue-500 text-white">
+      <div className="h-screen w-screen flex items-center justify-center bg-indigo-600 text-white">
         <div className="text-center">
           <i className="fas fa-spinner fa-spin text-4xl mb-4"></i>
-          <h1 className="text-2xl font-game">Initializing ScribbleSync...</h1>
+          <h1 className="text-2xl font-game">Syncing with Firebase...</h1>
         </div>
       </div>
     );
