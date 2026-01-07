@@ -1,0 +1,5 @@
+{
+  "name": "ScribbleSync",
+  "description": "A high-performance, realtime multiplayer drawing and guessing game built with React, Tailwind, and Firebase. Features lobby systems, matchmaking, and synchronous canvas drawing.",
+  "requestFramePermissions": []
+}
