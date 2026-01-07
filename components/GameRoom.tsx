@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebaseConfig';
-import { doc, onSnapshot, collection, updateDoc, deleteDoc, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, onSnapshot, collection, updateDoc, deleteDoc, getDocs, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { Room, Player, Message, RoomStatus } from '../types';
 import Canvas from './Canvas';
 import Chat from './Chat';
@@ -13,7 +13,7 @@ interface GameRoomProps {
   onLeave: () => void;
 }
 
-const WORDS = ['Apple', 'Dog', 'Skyline', 'Pizza', 'Rocket', 'Guitar', 'Laptop', 'Elephant', 'Tree', 'Ocean', 'Sushi', 'Robot', 'Volcano', 'Parrot', 'Skateboard'];
+const WORDS = ['Apple', 'Dog', 'Skyline', 'Pizza', 'Rocket', 'Guitar', 'Laptop', 'Elephant', 'Tree', 'Ocean', 'Sushi', 'Robot', 'Volcano', 'Parrot', 'Skateboard', 'Sunflower', 'Mountain', 'Butterfly', 'Hamburger', 'Ice Cream'];
 
 const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
   const [room, setRoom] = useState<Room | null>(null);
@@ -22,7 +22,7 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
   const [brushSize, setBrushSize] = useState(4);
   const [isPickingWord, setIsPickingWord] = useState(false);
   const [wordChoices, setWordChoices] = useState<string[]>([]);
-  const timerRef = useRef<any>(null);
+  const timerIntervalRef = useRef<any>(null);
 
   useEffect(() => {
     const unsubRoom = onSnapshot(doc(db, 'rooms', roomId), (snap) => {
@@ -34,7 +34,6 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
       const p = snap.docs.map(d => d.data() as Player);
       const sorted = p.sort((a, b) => b.score - a.score);
       setPlayers(sorted);
-      updateDoc(doc(db, 'rooms', roomId), { playerCount: sorted.length });
     });
 
     return () => {
@@ -47,15 +46,23 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
     if (!room || room.hostId !== user.uid) return;
 
     if (room.status === RoomStatus.PLAYING && room.timer > 0) {
-      timerRef.current = setInterval(() => {
-        updateDoc(doc(db, 'rooms', roomId), { timer: room.timer - 1 });
-      }, 1000);
-    } else if (room.status === RoomStatus.PLAYING && room.timer === 0) {
-      endTurn();
+      if (!timerIntervalRef.current) {
+        timerIntervalRef.current = setInterval(() => {
+          updateDoc(doc(db, 'rooms', roomId), { timer: room.timer - 1 });
+        }, 1000);
+      }
+    } else {
+        if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = null;
+        }
+        if (room.status === RoomStatus.PLAYING && room.timer === 0) {
+            endTurn();
+        }
     }
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
   }, [room?.status, room?.timer, room?.hostId, user.uid, roomId]);
 
@@ -68,35 +75,43 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
   };
 
   const nextTurn = async (round?: number) => {
-    const nextPlayerIndex = round ? 0 : (players.findIndex(p => p.id === room?.drawerId) + 1) % players.length;
+    const currentIndex = players.findIndex(p => p.id === room?.drawerId);
+    const nextPlayerIndex = round ? 0 : (currentIndex + 1) % players.length;
     const nextDrawer = players[nextPlayerIndex];
     
-    // Clear canvas strokes
+    // Clear canvas strokes efficiently
     const strokesSnap = await getDocs(collection(db, `rooms/${roomId}/strokes`));
     const batch = writeBatch(db);
     strokesSnap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
-
+    
     // Reset player guess statuses
-    for (const p of players) {
-      await updateDoc(doc(db, `rooms/${roomId}/players`, p.id), { hasGuessed: false });
-    }
+    players.forEach(p => {
+        batch.update(doc(db, `rooms/${roomId}/players`, p.id), { hasGuessed: false });
+    });
+
+    await batch.commit();
 
     await updateDoc(doc(db, 'rooms', roomId), {
       status: RoomStatus.PLAYING,
       drawerId: nextDrawer.id,
       currentRound: round || room!.currentRound,
       timer: 80,
-      currentWord: null
+      currentWord: null,
+      lastActiveAt: Date.now()
     });
   };
 
   const endTurn = async () => {
-    const isLastPlayer = players.findIndex(p => p.id === room?.drawerId) === players.length - 1;
+    const currentIndex = players.findIndex(p => p.id === room?.drawerId);
+    const isLastPlayer = currentIndex === players.length - 1;
     const isGameOver = room!.currentRound >= room!.maxRounds && isLastPlayer;
     
     if (isGameOver) {
-      await updateDoc(doc(db, 'rooms', roomId), { status: RoomStatus.ENDED });
+      const winner = players[0]; // players are sorted by score
+      await updateDoc(doc(db, 'rooms', roomId), { 
+          status: RoomStatus.ENDED,
+          winner: winner.name 
+      });
     } else {
       nextTurn(isLastPlayer ? (room!.currentRound + 1) : undefined);
     }
@@ -119,20 +134,21 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
   if (!room) return null;
 
   return (
-    <div className="h-full flex flex-col p-4 space-y-4 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm">
+    <div className="h-full flex flex-col p-4 space-y-4 max-w-7xl mx-auto bg-slate-50">
+      {/* Top Navigation Bar */}
+      <div className="flex justify-between items-center bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
         <div className="flex items-center gap-4">
-          <button onClick={onLeave} className="text-slate-400 hover:text-red-500 transition-colors">
-            <i className="fas fa-chevron-left text-xl"></i>
+          <button onClick={onLeave} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all">
+            <i className="fas fa-chevron-left"></i>
           </button>
           <div>
             <h2 className="font-game text-xl text-indigo-600">Round {room.currentRound}/{room.maxRounds}</h2>
-            <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">{room.id}</p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black">ID: {room.id}</p>
           </div>
         </div>
 
         <div className="flex-1 flex justify-center">
-          <div className="bg-slate-100 px-8 py-2 rounded-full font-game text-2xl tracking-widest">
+          <div className="bg-indigo-50 text-indigo-700 px-10 py-3 rounded-2xl font-game text-2xl tracking-[0.2em] shadow-inner border border-indigo-100 min-w-[300px] text-center">
             {isDrawer ? (
                 room.currentWord?.toUpperCase() || "SELECT A WORD"
             ) : (
@@ -142,19 +158,21 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className={`px-4 py-2 rounded-xl font-game text-xl flex items-center gap-2 ${room.timer < 15 ? 'bg-red-100 text-red-500 animate-pulse' : 'bg-indigo-100 text-indigo-600'}`}>
-            <i className="fas fa-clock"></i> {room.timer}s
+          <div className={`px-5 py-3 rounded-2xl font-game text-2xl flex items-center gap-3 transition-colors ${room.timer < 15 ? 'bg-red-500 text-white animate-pulse' : 'bg-indigo-600 text-white'}`}>
+            <i className="fas fa-clock text-xl opacity-80"></i> {room.timer}s
           </div>
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col md:flex-row gap-4 overflow-hidden">
-        <div className="w-full md:w-64">
+      <div className="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden">
+        {/* Left Sidebar: Scoreboard */}
+        <div className="w-full md:w-72 flex flex-col h-full">
            <Scoreboard players={players} drawerId={room.drawerId} />
         </div>
 
+        {/* Center: Canvas Area */}
         <div className="flex-1 flex flex-col gap-4 relative">
-          <div className="flex-1 min-h-[400px]">
+          <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden relative">
              <Canvas 
                roomId={roomId} 
                isDrawer={isDrawer && !!room.currentWord} 
@@ -163,49 +181,58 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
              />
           </div>
           
+          {/* Drawing Tools */}
           {isDrawer && room.currentWord && (
-            <div className="bg-white p-3 rounded-xl shadow-sm flex items-center justify-between">
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between animate-in slide-in-from-bottom-4 duration-300">
               <div className="flex gap-2">
-                {['#000000', '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#ffffff'].map(c => (
+                {['#000000', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#ffffff'].map(c => (
                   <button 
                     key={c} 
                     onClick={() => setColor(c)}
-                    className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${color === c ? 'border-indigo-500 scale-110' : 'border-transparent'}`}
+                    className={`w-10 h-10 rounded-xl border-4 transition-all hover:scale-110 active:scale-90 ${color === c ? 'border-indigo-400 scale-110 shadow-lg' : 'border-slate-50'}`}
                     style={{ backgroundColor: c }}
                   />
                 ))}
               </div>
-              <div className="flex items-center gap-4">
-                <input 
-                  type="range" min="2" max="20" value={brushSize} 
-                  onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                  className="w-32 accent-indigo-500"
-                />
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-3">
+                    <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Size</span>
+                    <input 
+                    type="range" min="2" max="30" value={brushSize} 
+                    onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                    className="w-32 accent-indigo-600"
+                    />
+                </div>
               </div>
             </div>
           )}
 
+          {/* Overlays */}
           {room.status === RoomStatus.WAITING && (
-            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm rounded-xl flex items-center justify-center z-10">
-              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full mx-4">
-                <h3 className="text-2xl font-game text-slate-800 mb-2">Lobby</h3>
-                <p className="text-slate-500 mb-8">{players.length}/8 players</p>
+            <div className="absolute inset-0 bg-indigo-900/40 backdrop-blur-md rounded-3xl flex items-center justify-center z-20">
+              <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl text-center max-w-sm w-full mx-4 border-4 border-white transform animate-in zoom-in-95 duration-500">
+                <div className="w-24 h-24 bg-indigo-100 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                    <i className="fas fa-users text-indigo-600 text-5xl"></i>
+                </div>
+                <h3 className="text-3xl font-game text-slate-800 mb-2">Game Lobby</h3>
+                <p className="text-slate-500 mb-10 font-medium">Waiting for players... ({players.length}/8)</p>
                 {room.hostId === user.uid ? (
-                  <button onClick={startGame} className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl shadow-lg">Start</button>
+                  <button onClick={startGame} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-game text-xl py-4 rounded-2xl shadow-xl transition-all active:scale-95">START MATCH</button>
                 ) : (
-                  <div className="text-indigo-600 font-bold animate-pulse">Waiting for host...</div>
+                  <div className="text-indigo-600 font-game text-xl animate-pulse tracking-widest uppercase">Waiting for host</div>
                 )}
               </div>
             </div>
           )}
 
           {isPickingWord && (
-             <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm rounded-xl flex items-center justify-center z-20">
-              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center">
-                <h3 className="text-3xl font-game text-indigo-600 mb-6">Pick a Word!</h3>
-                <div className="flex flex-col gap-3">
+             <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-lg rounded-3xl flex items-center justify-center z-30">
+              <div className="bg-white p-10 rounded-[3rem] shadow-2xl text-center max-w-md w-full border-4 border-indigo-500 transform animate-in zoom-in-90 duration-300">
+                <h3 className="text-4xl font-game text-indigo-600 mb-2">Your Turn!</h3>
+                <p className="text-slate-400 mb-8 font-bold uppercase tracking-widest text-xs">Pick a word to draw</p>
+                <div className="flex flex-col gap-4">
                   {wordChoices.map(word => (
-                    <button key={word} onClick={() => selectWord(word)} className="bg-slate-100 hover:bg-indigo-500 hover:text-white px-8 py-4 rounded-2xl font-bold text-xl transition-all">
+                    <button key={word} onClick={() => selectWord(word)} className="bg-slate-50 border-2 border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 hover:text-indigo-600 px-8 py-5 rounded-3xl font-game text-2xl transition-all active:scale-95 shadow-sm">
                       {word}
                     </button>
                   ))}
@@ -213,10 +240,29 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
               </div>
             </div>
           )}
+
+          {room.status === RoomStatus.ENDED && (
+            <div className="absolute inset-0 bg-emerald-600/90 backdrop-blur-xl rounded-3xl flex items-center justify-center z-40">
+              <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl text-center max-w-md w-full border-8 border-emerald-400/30 transform animate-in scale-110 duration-700">
+                <div className="text-7xl mb-6">🏆</div>
+                <h3 className="text-5xl font-game text-emerald-600 mb-2">Winner!</h3>
+                <p className="text-2xl font-bold text-slate-700 mb-10">{room.winner}</p>
+                <button onClick={onLeave} className="w-full bg-slate-800 hover:bg-slate-900 text-white font-game text-xl py-4 rounded-2xl shadow-lg transition-all active:scale-95 uppercase tracking-widest">Back to Menu</button>
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="w-full md:w-80 flex flex-col gap-2 overflow-hidden">
-          <Chat roomId={roomId} user={user} isDrawer={isDrawer} currentWord={room.currentWord} timer={room.timer} status={room.status} />
+        {/* Right Sidebar: Chat Area */}
+        <div className="w-full md:w-80 flex flex-col h-full">
+          <Chat 
+            roomId={roomId} 
+            user={user} 
+            isDrawer={isDrawer} 
+            currentWord={room.currentWord} 
+            timer={room.timer} 
+            status={room.status} 
+          />
         </div>
       </div>
     </div>

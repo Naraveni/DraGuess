@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { auth } from './firebaseConfig';
+// Fix: Corrected modular imports for Firebase Auth functions
 import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import LandingPage from './components/LandingPage';
 import GameRoom from './components/GameRoom';
@@ -11,6 +12,7 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Fix: Using the correct modular onAuthStateChanged listener with the auth instance
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (u) {
         setUser(u);

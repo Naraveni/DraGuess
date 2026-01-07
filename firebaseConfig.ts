@@ -1,6 +1,7 @@
 
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
+// Fix: Import getAuth from the modular auth package
 import { getAuth } from 'firebase/auth';
 
 // Replace these with your actual Firebase project credentials
