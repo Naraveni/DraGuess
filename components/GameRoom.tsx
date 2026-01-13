@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebaseConfig';
 import { doc, onSnapshot, collection, updateDoc, getDocs, writeBatch, query, limit } from 'firebase/firestore';
@@ -49,26 +50,27 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
     };
   }, [roomId, onLeave]);
 
+  // Fetch unique drawing words using Gemini
   const fetchWords = async () => {
     setIsLoadingWords(true);
     try {
-      const apiKey = process.env.API_KEY || "";
-      if (apiKey) {
-        const ai = new GoogleGenAI({ apiKey });
-        const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: 'Generate 3 unique, simple common nouns for a drawing game. Simple to draw. Comma separated list.',
-        });
-        const words = response.text?.split(',').map(w => w.trim()) || [];
-        if (words.length >= 3) {
-          setWordChoices(words.slice(0, 3));
-          setIsLoadingWords(false);
-          return;
-        }
+      // Initialize Gemini directly before use with process.env.API_KEY
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: 'Generate 3 unique, simple common nouns for a drawing game. Simple to draw. Comma separated list.',
+      });
+      // Access text directly from the response object
+      const text = response.text;
+      const words = text?.split(',').map(w => w.trim()) || [];
+      if (words.length >= 3) {
+        setWordChoices(words.slice(0, 3));
+        setIsLoadingWords(false);
+        return;
       }
-      throw new Error("No API key or bad response");
+      throw new Error("Invalid response format");
     } catch (error) {
-      console.warn("Gemini word fetch failed, using fallbacks.");
+      console.warn("Gemini word fetch failed, using fallbacks.", error);
       const shuffled = [...FALLBACK_WORDS].sort(() => 0.5 - Math.random());
       setWordChoices(shuffled.slice(0, 3));
     } finally {

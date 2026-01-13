@@ -1,6 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { auth } from './firebaseConfig';
-import { onAuthStateChanged, signInAnonymously, User } from 'firebase/auth';
+// Fix: Use named exports from @firebase/auth scoped package
+import { onAuthStateChanged, signInAnonymously } from '@firebase/auth';
+// Fix: Import User type from @firebase/auth scoped package
+import type { User } from '@firebase/auth';
 import LandingPage from './components/LandingPage';
 import GameRoom from './components/GameRoom';
 
@@ -10,36 +14,22 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Ensure we don't hang on the loading screen forever
-    const loadingTimeout = setTimeout(() => {
+    // Listen for authentication state changes
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
       setLoading(false);
-    }, 3000);
+    });
 
-    let unsubscribe = () => {};
-
-    if (auth && typeof auth.onAuthStateChanged === 'function') {
-      unsubscribe = onAuthStateChanged(auth, (u) => {
-        setUser(u);
+    // Automatically sign in anonymously if not already authenticated
+    // This provides a seamless "Click to Play" experience for users
+    if (!auth.currentUser) {
+      signInAnonymously(auth).catch(err => {
+        console.error("Firebase Authentication failed:", err);
         setLoading(false);
-        clearTimeout(loadingTimeout);
       });
-
-      // Try to sign in if no current user
-      if (!auth.currentUser) {
-        signInAnonymously(auth).catch(err => {
-          console.error("Auth sign-in failed (likely missing API key):", err);
-          setLoading(false);
-        });
-      }
-    } else {
-      console.error("Firebase Auth not properly initialized.");
-      setLoading(false);
     }
 
-    return () => {
-      unsubscribe();
-      clearTimeout(loadingTimeout);
-    };
+    return () => unsubscribe();
   }, []);
 
   const handleJoinRoom = (roomId: string) => {
@@ -59,7 +49,7 @@ const App: React.FC = () => {
           <i className="fas fa-pencil-alt absolute text-2xl animate-bounce"></i>
         </div>
         <h1 className="text-4xl font-game tracking-widest animate-pulse mb-2">ScribbleSync</h1>
-        <p className="text-indigo-200 font-medium tracking-wide">Initializing workspace...</p>
+        <p className="text-indigo-200 font-medium tracking-wide">Syncing workspaces...</p>
       </div>
     );
   }

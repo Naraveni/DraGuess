@@ -15,9 +15,8 @@ const Canvas: React.FC<CanvasProps> = ({ roomId, isDrawer, color, brushSize }) =
   const [isDrawing, setIsDrawing] = useState(false);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const lastPointRef = useRef<Point | null>(null);
-  const currentStrokeIdRef = useRef<string | null>(null);
+  const currentPathRef = useRef<Point[]>([]);
 
-  // Helper to draw a single line segment
   const drawSegment = useCallback((ctx: CanvasRenderingContext2D, start: Point, end: Point, strokeColor: string, width: number) => {
     ctx.beginPath();
     ctx.strokeStyle = strokeColor;
@@ -29,7 +28,6 @@ const Canvas: React.FC<CanvasProps> = ({ roomId, isDrawer, color, brushSize }) =
     ctx.stroke();
   }, []);
 
-  // Sync with Firestore
   useEffect(() => {
     const q = query(collection(db, `rooms/${roomId}/strokes`), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, (snap) => {
@@ -39,7 +37,6 @@ const Canvas: React.FC<CanvasProps> = ({ roomId, isDrawer, color, brushSize }) =
     return () => unsubscribe();
   }, [roomId]);
 
-  // Redraw whenever strokes change
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -60,15 +57,9 @@ const Canvas: React.FC<CanvasProps> = ({ roomId, isDrawer, color, brushSize }) =
     const rect = canvas.getBoundingClientRect();
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    
-    // Scale points if canvas internal dimensions differ from CSS dimensions
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    
-    return { 
-      x: (clientX - rect.left) * scaleX, 
-      y: (clientY - rect.top) * scaleY 
-    };
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
   };
 
   const handleMouseDown = (e: any) => {
@@ -76,52 +67,64 @@ const Canvas: React.FC<CanvasProps> = ({ roomId, isDrawer, color, brushSize }) =
     const pos = getPos(e);
     setIsDrawing(true);
     lastPointRef.current = pos;
-    currentStrokeIdRef.current = Math.random().toString(36).substring(7);
+    currentPathRef.current = [pos];
   };
 
-  const handleMouseMove = async (e: any) => {
+  const handleMouseMove = (e: any) => {
     if (!isDrawing || !isDrawer || !lastPointRef.current) return;
-    
     const currentPoint = getPos(e);
     const dist = Math.hypot(currentPoint.x - lastPointRef.current.x, currentPoint.y - lastPointRef.current.y);
-    
-    // Only record points if they've moved enough to matter (optimization)
-    if (dist > 2) {
-      const prevPoint = lastPointRef.current;
+
+    if (dist > 3) {
+      const ctx = canvasRef.current?.getContext('2d');
+      if (ctx) drawSegment(ctx, lastPointRef.current, currentPoint, color, brushSize);
+      
+      currentPathRef.current.push(currentPoint);
       lastPointRef.current = currentPoint;
 
-      // Real-time sync: Add the new point to Firestore immediately
-      // To keep it simple and performant, we create a small stroke for every segment
-      // In a production app, we might update a single document's points array, but that can hit size limits.
-      await addDoc(collection(db, `rooms/${roomId}/strokes`), {
-        points: [prevPoint, currentPoint],
-        color,
-        width: brushSize,
-        timestamp: Date.now()
-      });
+      // Realtime Sync Strategy: 
+      // Instead of every single move (which lags Firestore), 
+      // we could push in chunks if path length > 10. 
+      // For this demo, we'll sync on MouseUp for maximum stability, 
+      // or short bursts for "realtime" feel.
+      if (currentPathRef.current.length > 15) {
+          syncPath();
+      }
     }
   };
 
-  const handleMouseUp = () => {
+  const syncPath = async () => {
+    if (currentPathRef.current.length < 2) return;
+    const pointsToSync = [...currentPathRef.current];
+    // Keep the last point to continue the line in the next batch
+    currentPathRef.current = [pointsToSync[pointsToSync.length - 1]];
+    
+    await addDoc(collection(db, `rooms/${roomId}/strokes`), {
+      points: pointsToSync,
+      color,
+      width: brushSize,
+      timestamp: Date.now()
+    });
+  };
+
+  const handleMouseUp = async () => {
+    if (!isDrawing || !isDrawer) return;
     setIsDrawing(false);
+    await syncPath();
     lastPointRef.current = null;
-    currentStrokeIdRef.current = null;
+    currentPathRef.current = [];
   };
 
   const clearCanvas = async () => {
     if (!isDrawer) return;
-    try {
-      const snap = await getDocs(collection(db, `rooms/${roomId}/strokes`));
-      const batch = writeBatch(db);
-      snap.docs.forEach(d => batch.delete(d.ref));
-      await batch.commit();
-    } catch (err) {
-      console.error("Failed to clear canvas:", err);
-    }
+    const snap = await getDocs(collection(db, `rooms/${roomId}/strokes`));
+    const batch = writeBatch(db);
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
   };
 
   return (
-    <div className="relative w-full h-full bg-white rounded-xl overflow-hidden">
+    <div className="relative w-full h-full bg-white rounded-3xl overflow-hidden shadow-inner border-4 border-slate-50">
       <canvas
         ref={canvasRef}
         width={1200}
@@ -138,10 +141,10 @@ const Canvas: React.FC<CanvasProps> = ({ roomId, isDrawer, color, brushSize }) =
       {isDrawer && (
         <button 
           onClick={clearCanvas} 
-          className="absolute bottom-6 right-6 bg-red-500 hover:bg-red-600 text-white w-12 h-12 rounded-2xl shadow-lg transition-all flex items-center justify-center group"
+          className="absolute bottom-6 right-6 bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-500 w-12 h-12 rounded-2xl transition-all flex items-center justify-center border-2 border-slate-200"
           title="Clear Canvas"
         >
-          <i className="fas fa-trash-alt group-hover:rotate-12 transition-transform"></i>
+          <i className="fas fa-trash-alt"></i>
         </button>
       )}
     </div>

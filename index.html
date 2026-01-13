@@ -10,7 +10,7 @@
     <style>
         body {
             font-family: 'Quicksand', sans-serif;
-            background-color: #f0f2f5;
+            background-color: #f8fafc;
         }
         .font-game {
             font-family: 'Fredoka One', cursive;
@@ -33,27 +33,33 @@
         }
     </style>
     <script>
-        // Critical shim for local and preview environments
-        window.process = window.process || { env: {} };
-        window.process.env = window.process.env || {};
-        // Standard keys used by the app logic
-        window.process.env.API_KEY = "";
-        window.process.env.VITE_FIREBASE_API_KEY = "YOUR_API_KEY";
+        /**
+         * The process object is required by many libraries in a browser environment.
+         * We shim it here, ensuring the API_KEY from the environment is accessible.
+         */
+        window.process = { 
+            env: { 
+                API_KEY: "" 
+            } 
+        };
     </script>
 <script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom": "https://esm.sh/react-dom@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "firebase/app": "https://esm.sh/firebase@^10.8.0/app",
-    "firebase/auth": "https://esm.sh/firebase@^10.8.0/auth",
-    "firebase/firestore": "https://esm.sh/firebase@^10.8.0/firestore",
-    "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
+    "react": "https://esm.sh/react@19.0.0",
+    "react-dom": "https://esm.sh/react-dom@19.0.0",
+    "react-dom/": "https://esm.sh/react-dom@19.0.0/",
+    "react/": "https://esm.sh/react@19.0.0/",
+    "firebase/app": "https://esm.sh/firebase@10.8.0/app",
+    "firebase/auth": "https://esm.sh/firebase@10.8.0/auth",
+    "firebase/firestore": "https://esm.sh/firebase@10.8.0/firestore",
+    "@google/genai": "https://esm.sh/@google/genai@1.35.0",
     "firebase/": "https://esm.sh/firebase@^12.7.0/",
     "vite": "https://esm.sh/vite@^7.3.1",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "@firebase/app": "https://esm.sh/@firebase/app@^0.14.6",
+    "@firebase/firestore": "https://esm.sh/@firebase/firestore@^4.9.3",
+    "@firebase/auth": "https://esm.sh/@firebase/auth@^1.12.0"
   }
 }
 </script>
