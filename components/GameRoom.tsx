@@ -1,12 +1,10 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebaseConfig';
-import { doc, onSnapshot, collection, updateDoc, getDocs, writeBatch, query, limit } from 'firebase/firestore';
+import { doc, onSnapshot, collection, updateDoc, getDocs, writeBatch, query, limit } from '@firebase/firestore';
 import { Room, Player, RoomStatus } from '../types';
 import Canvas from './Canvas';
 import Chat from './Chat';
 import Scoreboard from './Scoreboard';
-import { GoogleGenAI } from "@google/genai";
 
 interface GameRoomProps {
   roomId: string;
@@ -50,27 +48,31 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
     };
   }, [roomId, onLeave]);
 
-  // Fetch unique drawing words using Gemini
-  const fetchWords = async () => {
+  /**
+   * Fetches 3 random words from the Firestore 'randomWords' collection.
+   * Assumes documents in 'randomWords' have a 'word' or 'text' field.
+   */
+  const fetchWordsFromFirestore = async () => {
     setIsLoadingWords(true);
     try {
-      // Initialize Gemini directly before use with process.env.API_KEY
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: 'Generate 3 unique, simple common nouns for a drawing game. Simple to draw. Comma separated list.',
+      // Query the randomWords collection. We limit to a reasonable number to shuffle client-side.
+      const wordsSnap = await getDocs(query(collection(db, 'randomWords'), limit(100)));
+      
+      let words: string[] = wordsSnap.docs.map(doc => {
+        const data = doc.data();
+        return (data.word || data.text || doc.id).toString();
       });
-      // Access text directly from the response object
-      const text = response.text;
-      const words = text?.split(',').map(w => w.trim()) || [];
-      if (words.length >= 3) {
-        setWordChoices(words.slice(0, 3));
-        setIsLoadingWords(false);
-        return;
+
+      // If the database has fewer than 3 words, supplement with fallbacks
+      if (words.length < 3) {
+        words = Array.from(new Set([...words, ...FALLBACK_WORDS]));
       }
-      throw new Error("Invalid response format");
+
+      // Shuffle and pick 3
+      const shuffled = words.sort(() => 0.5 - Math.random());
+      setWordChoices(shuffled.slice(0, 3));
     } catch (error) {
-      console.warn("Gemini word fetch failed, using fallbacks.", error);
+      console.warn("Firestore 'randomWords' fetch failed, using fallbacks.", error);
       const shuffled = [...FALLBACK_WORDS].sort(() => 0.5 - Math.random());
       setWordChoices(shuffled.slice(0, 3));
     } finally {
@@ -153,7 +155,7 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onLeave }) => {
 
   useEffect(() => {
     if (room?.drawerId === user?.uid && !room.currentWord && room.status === RoomStatus.PLAYING) {
-      fetchWords();
+      fetchWordsFromFirestore();
       setIsPickingWord(true);
     }
   }, [room?.drawerId, room?.currentWord, room?.status, user?.uid]);
